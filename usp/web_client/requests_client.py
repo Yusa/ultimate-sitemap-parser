@@ -104,13 +104,33 @@ class RequestsWebClient(AbstractWebClient):
 
     def get(self, url: str) -> AbstractWebClientResponse:
         try:
-            response = requests.get(
+            response_head = requests.head(
                 url,
                 timeout=self.__timeout,
-                stream=True,
                 headers={'User-Agent': self.__USER_AGENT},
                 proxies=self.__proxies
             )
+
+            content_length_ok = False
+            response = None
+            if 'Content-Length' in response_head.headers.keys() and int(response_head.headers['Content-Length']) <= self.__max_response_data_length:
+                content_length_ok = True
+                response = requests.get(
+                    url,
+                    timeout=self.__timeout,
+                    stream=True,
+                    headers={'User-Agent': self.__USER_AGENT},
+                    proxies=self.__proxies
+                )
+            else:
+                message = ''
+                if 'Content-Length' not in response_head.headers.keys():
+                    message = 'Content-Length not found.'
+                else:
+                    message = f"Content-Length ({response_head.headers['Content-Length']}) is greater than max response length."
+                return RequestsWebClientErrorResponse(message=message, retryable=False)
+
+
         except requests.exceptions.Timeout as ex:
             # Retryable timeouts
             return RequestsWebClientErrorResponse(message=str(ex), retryable=True)
@@ -121,16 +141,17 @@ class RequestsWebClient(AbstractWebClient):
 
         else:
 
-            if 200 <= response.status_code < 300:
-                return RequestsWebClientSuccessResponse(
-                    requests_response=response,
-                    max_response_data_length=self.__max_response_data_length,
-                )
-            else:
-
-                message = '{} {}'.format(response.status_code, response.reason)
-
-                if response.status_code in RETRYABLE_HTTP_STATUS_CODES:
-                    return RequestsWebClientErrorResponse(message=message, retryable=True)
+            if content_length_ok:
+                if 200 <= response.status_code < 300:
+                    return RequestsWebClientSuccessResponse(
+                        requests_response=response,
+                        max_response_data_length=self.__max_response_data_length,
+                    )
                 else:
-                    return RequestsWebClientErrorResponse(message=message, retryable=False)
+
+                    message = '{} {}'.format(response.status_code, response.reason)
+
+                    if response.status_code in RETRYABLE_HTTP_STATUS_CODES:
+                        return RequestsWebClientErrorResponse(message=message, retryable=True)
+                    else:
+                        return RequestsWebClientErrorResponse(message=message, retryable=False)
